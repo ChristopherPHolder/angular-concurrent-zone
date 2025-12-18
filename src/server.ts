@@ -1,25 +1,19 @@
 import {
+  AngularNodeAppEngine,
   createNodeRequestHandler,
-  createWebRequestFromNodeRequest,
   isMainModule,
   writeResponseToNodeResponse,
 } from '@angular/ssr/node';
-import { AngularAppEngine } from '@angular/ssr';
-import Fastify, { FastifyRequest } from 'fastify';
+import Fastify from 'fastify';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setTimeout } from 'node:timers/promises';
-import type { IncomingMessage } from 'node:http';
 import fastifyStatic from '@fastify/static';
 
-const serverDistFolder = dirname(fileURLToPath(import.meta.url));
-const browserDistFolder = resolve(serverDistFolder, '../browser');
-
 const app = Fastify({
-  logger: false
+  logger: false,
 });
 
-const angularApp = new AngularAppEngine();
+const angularApp = new AngularNodeAppEngine();
 
 /**
  * Example Fastify Rest API endpoints can be defined here.
@@ -37,29 +31,27 @@ const angularApp = new AngularAppEngine();
 /**
  * Initialize Fastify server
  */
-async function buildServer() {
+function buildServer() {
   // Register static file serving plugin with a specific prefix
-  await app.register(fastifyStatic, {
+  app.register(fastifyStatic, {
     root: resolve(dirname(fileURLToPath(import.meta.url)), '../browser'),
     wildcard: false,
   });
 
   app.get('/health', async (req, reply) => {
-    console.log(req.url);
-
-    await setTimeout(5_000);
-    console.log('REQUEST HELLO timer end');
-    return reply.code(200).send('health');
+    return (
+      reply
+        .code(200)
+        .send('OK')
+    );
   })
 
   /**
    * Handle all other requests by rendering the Angular application.
    */
   app.get('/*', async (request, reply) => {
-    console.log('Running request route', request.url);
-
     try {
-      const response = await angularApp.handle(convertToNgRequest(request));
+      const response = await angularApp.handle(request.raw);
 
       if (response) {
         return writeResponseToNodeResponse(response, reply.raw);
@@ -75,32 +67,15 @@ async function buildServer() {
   return app;
 }
 
+const serverApp = buildServer();
+
 /**
  * Start the server if this module is the main entry point.
  * The server listens on the port defined by the `PORT` environment variable, or defaults to 4000.
  */
 if (isMainModule(import.meta.url)) {
-  buildServer()
-    .then(async (server) => {
-      const port = process.env['PORT'] || 4000;
-      try {
-        await server.listen({ port: Number(port), host: '0.0.0.0' });
-        console.log(`Node Fastify server listening on http://localhost:${port}`);
-      } catch (err) {
-        server.log.error(err);
-        process.exit(1);
-      }
-    })
-    .catch((err) => {
-      console.error('Error building server:', err);
-      process.exit(1);
-    });
-}
-
-function convertToNgRequest(req: FastifyRequest) {
-  const { socket, originalUrl, url = '', headers } = req;
-
-  return createWebRequestFromNodeRequest({ headers, socket, url, originalUrl, method: 'GET' } as any as IncomingMessage);
+  const port = process.env['PORT'] || 4000;
+  await serverApp.listen({ port: Number(port), host: '0.0.0.0' });
 }
 
 
